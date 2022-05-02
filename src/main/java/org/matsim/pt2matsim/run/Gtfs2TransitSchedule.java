@@ -21,9 +21,9 @@ package org.matsim.pt2matsim.run;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.matsim.core.utils.geometry.geotools.MGC;
-import org.matsim.pt2matsim.gtfs.GtfsConverter;
+import org.matsim.pt2matsim.gtfs.GtfsConverterWei;
 import org.matsim.pt2matsim.gtfs.GtfsFeed;
-import org.matsim.pt2matsim.gtfs.GtfsFeedImpl;
+import org.matsim.pt2matsim.gtfs.GtfsFeedImplWei;
 import org.matsim.pt2matsim.tools.ScheduleTools;
 
 import java.time.LocalDate;
@@ -101,10 +101,11 @@ public final class Gtfs2TransitSchedule {
 		String param = sampleDayParam == null ? DAY_WITH_MOST_TRIPS : sampleDayParam;
 
 		// load gtfs files
-		GtfsFeed gtfsFeed = new GtfsFeedImpl(gtfsFolder);
+		//Todo: change to GTFSFeedImplWei for handling flixbus
+		GtfsFeed gtfsFeed = new GtfsFeedImplWei(gtfsFolder);
 
 		// convert to transit schedule
-		GtfsConverter converter = new GtfsConverter(gtfsFeed);
+		GtfsConverterWei converter = new GtfsConverterWei(gtfsFeed);
 		converter.convert(param, outputCoordinateSystem);
 
 		// write Files

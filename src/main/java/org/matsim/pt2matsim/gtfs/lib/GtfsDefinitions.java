@@ -59,6 +59,8 @@ public final class GtfsDefinitions {
 	public static final String START_TIME = "start_time";
 	public static final String END_TIME = "end_time";
 	public static final String HEADWAY_SECS = "headway_secs";
+	//Todo: AGENCY_ID is added for processing flixbus
+	public static final String AGENCY_ID = "agency_id";
 
 	public static final String MONDAY = "monday";
 	public static final String TUESDAY = "tuesday";
@@ -117,9 +119,10 @@ public final class GtfsDefinitions {
 				new String[]{SHAPE_ID, SHAPE_PT_LON, SHAPE_PT_LAT, SHAPE_PT_SEQUENCE},
 				new String[]{SHAPE_DIST_TRAVELED}),
 
+		//Todo: AGENCY_ID is added into the column names for handling flixbus
 		ROUTES("Route",
 				"routes.txt",
-				new String[]{ROUTE_ID, ROUTE_SHORT_NAME, ROUTE_LONG_NAME, ROUTE_TYPE},
+				new String[]{ROUTE_ID, ROUTE_SHORT_NAME, ROUTE_LONG_NAME, ROUTE_TYPE, AGENCY_ID},
 				new String[]{ROUTE_DESC, ROUTE_URL, ROUTE_COLOR, ROUTE_TEXT_COLOR}),
 
 		TRIPS("Trip",
