@@ -20,6 +20,7 @@ package org.matsim.pt2matsim.gtfs;
 
 import org.apache.log4j.Logger;
 import org.matsim.api.core.v01.Id;
+import org.matsim.core.utils.geometry.CoordUtils;
 import org.matsim.core.utils.misc.Time;
 import org.matsim.pt.transitSchedule.api.*;
 import org.matsim.pt2matsim.gtfs.lib.*;
@@ -42,350 +43,372 @@ import java.util.Map;
  */
 public class GtfsConverterWei {
 
-	protected final boolean AWAIT_DEPARTURE_TIME_DEFAULT = true;
-	protected final boolean BLOCKS_DEFAULT = false;
+    protected final boolean AWAIT_DEPARTURE_TIME_DEFAULT = true;
+    protected final boolean BLOCKS_DEFAULT = false;
 
-	public static final String ALL_SERVICE_IDS = "all";
-	public static final String DAY_WITH_MOST_TRIPS = "dayWithMostTrips";
-	public static final String DAY_WITH_MOST_SERVICES = "dayWithMostServices";
+    public static final String ALL_SERVICE_IDS = "all";
+    public static final String DAY_WITH_MOST_TRIPS = "dayWithMostTrips";
+    public static final String DAY_WITH_MOST_SERVICES = "dayWithMostServices";
 
-	protected static Logger log = Logger.getLogger(GtfsConverterWei.class);
-	protected final GtfsFeed feed;
-	protected final TransitScheduleFactory scheduleFactory = ScheduleTools.createSchedule().getFactory();
+    protected static Logger log = Logger.getLogger(GtfsConverterWei.class);
+    protected final GtfsFeed feed;
+    protected final TransitScheduleFactory scheduleFactory = ScheduleTools.createSchedule().getFactory();
 
-	protected TransitSchedule transitSchedule;
-	protected Vehicles vehiclesContainer;
+    protected TransitSchedule transitSchedule;
+    protected Vehicles vehiclesContainer;
 
-	protected int noStopTimeTrips;
-	protected int stopPairsWithoutOffset;
+    protected int noStopTimeTrips;
+    protected int stopPairsWithoutOffset;
 
-	public GtfsConverterWei(GtfsFeed gtfsFeed) {
-		this.feed = gtfsFeed;
-	}
+    public GtfsConverterWei(GtfsFeed gtfsFeed) {
+        this.feed = gtfsFeed;
+    }
 
-	/**
-	 * @return the converted schedule (field, see {@link #getSchedule()}}
-	 */
-	public TransitSchedule convert(String serviceIdsParam, String outputCoordinateSystem) {
-		convert(serviceIdsParam, outputCoordinateSystem, ScheduleTools.createSchedule(), VehicleUtils.createVehiclesContainer());
-		return getSchedule();
-	}
+    /**
+     * @return the converted schedule (field, see {@link #getSchedule()}}
+     */
+    public TransitSchedule convert(String serviceIdsParam, String outputCoordinateSystem) {
+        convert(serviceIdsParam, outputCoordinateSystem, ScheduleTools.createSchedule(), VehicleUtils.createVehiclesContainer());
+        return getSchedule();
+    }
 
 
-	public TransitSchedule getSchedule() {
-		return this.transitSchedule;
-	}
+    public TransitSchedule getSchedule() {
+        return this.transitSchedule;
+    }
 
-	public Vehicles getVehicles() {
-		return this.vehiclesContainer;
-	}
+    public Vehicles getVehicles() {
+        return this.vehiclesContainer;
+    }
 
-	/**
-	 * Converts the loaded gtfs data to the given matsim transit schedule
-	 * <ol>
-	 * <li>generate transitStopFacilities from gtfsStops</li>
-	 * <li>Create a transitLine for each Route</li>
-	 * <li>Generate a transitRoute for each trip</li>
-	 * <li>Get the stop sequence of the trip</li>
-	 * <li>Calculate departures from stopTimes or frequencies</li>
-	 * <li>add transitRoute to the transitLine and thus to the schedule</li>
-	 * </ol>
-	 */
-	public void convert(String serviceIdsParam, String transformation, TransitSchedule schedule, Vehicles vehicles) {
-		log.info("#####################################");
-		log.info("Converting to MATSim transit schedule");
+    /**
+     * Converts the loaded gtfs data to the given matsim transit schedule
+     * <ol>
+     * <li>generate transitStopFacilities from gtfsStops</li>
+     * <li>Create a transitLine for each Route</li>
+     * <li>Generate a transitRoute for each trip</li>
+     * <li>Get the stop sequence of the trip</li>
+     * <li>Calculate departures from stopTimes or frequencies</li>
+     * <li>add transitRoute to the transitLine and thus to the schedule</li>
+     * </ol>
+     */
+    public void convert(String serviceIdsParam, String transformation, TransitSchedule schedule, Vehicles vehicles) {
+        log.info("#####################################");
+        log.info("Converting to MATSim transit schedule");
 
-		// transform feed
-		this.feed.transform(transformation);
+        // transform feed
+        this.feed.transform(transformation);
 
-		// get sample date
-		LocalDate extractDate = getExtractDate(serviceIdsParam);
-		if(extractDate != null) log.info("    Extracting schedule from date " + extractDate);
+        // get sample date
+        LocalDate extractDate = getExtractDate(serviceIdsParam);
+        if (extractDate != null) log.info("    Extracting schedule from date " + extractDate);
 
-		// generate TransitStopFacilities from gtfsStops and add them to the schedule
-		createStopFacilities(schedule);
+        // generate TransitStopFacilities from gtfsStops and add them to the schedule
+        createStopFacilities(schedule);
 
-		// create transfers
-		createTransfers(schedule);
+        // create transfers
+        createTransfers(schedule);
 
-		// Creating TransitLines from routes and TransitRoutes from trips
-		createTransitLines(schedule, extractDate);
+        // Creating TransitLines from routes and TransitRoutes from trips
+        createTransitLines(schedule, extractDate);
 
-		// combine TransitRoutes with identical stop/time sequences, add departures
-		combineTransitRoutes(schedule);
+        // combine TransitRoutes with identical stop/time sequences, add departures
+        combineTransitRoutes(schedule);
 
-		// clean the schedule
-		cleanSchedule(schedule);
+        // clean the schedule
+        cleanSchedule(schedule);
 
-		// create default vehicles
-		createVehicles(schedule, vehicles);
+        // create default vehicles
+        createVehicles(schedule, vehicles);
 
-		// statistics
-		int counterLines = 0;
-		int counterRoutes = 0;
-		for(TransitLine transitLine : schedule.getTransitLines().values()) {
-			counterLines++;
-			counterRoutes += transitLine.getRoutes().size();
-		}
-		log.info("    Created " + counterRoutes + " routes on " + counterLines + " lines.");
-		if(extractDate != null) log.info("    Day " + extractDate);
-		log.info("... GTFS converted to an unmapped MATSIM Transit Schedule");
-		log.info("#########################################################");
+        //Todo add a temporary code to check who are long-distance bus
+        Map<Id<TransitLine>, TransitLine> transitlines = schedule.getTransitLines();
+        for (Id<TransitLine> transitline : transitlines.keySet()) {
+            Map<Id<TransitRoute>, TransitRoute> transitRoutes = schedule.getTransitLines().get(transitline).getRoutes();
+            for (Id<TransitRoute> transitroute : transitRoutes.keySet()){
+                List<TransitRouteStop> stops = schedule.getTransitLines().get(transitline).getRoutes().get(transitroute).getStops();
+                String mode = schedule.getTransitLines().get(transitline).getRoutes().get(transitroute).getTransportMode();
+                for (int i = 0; i < stops.size()-1; i++){
+                    TransitRouteStop origin = stops.get(i);
+                    TransitRouteStop destination = stops.get(i+1);
+                    double distance = CoordUtils.calcEuclideanDistance(origin.getStopFacility().getCoord(), destination.getStopFacility().getCoord());
+                    if (mode.equals("bus") && distance >= 40*1000){
+                        System.out.println(transitline);
+                        break;
+                    }
 
-		this.transitSchedule = schedule;
-		this.vehiclesContainer = vehicles;
-	}
+                }
+                break;
+            }
+        }
 
-	protected void createStopFacilities(TransitSchedule schedule) {
-		for(Stop stop : this.feed.getStops().values()) {
-			TransitStopFacility stopFacility = createStopFacility(stop);
-			if(stopFacility != null) {
-				schedule.addStopFacility(stopFacility);
-			}
-		}
-	}
 
-	protected void createTransfers(TransitSchedule schedule) {
-		MinimalTransferTimes minimalTransferTimes = schedule.getMinimalTransferTimes();
+        // statistics
+        int counterLines = 0;
+        int counterRoutes = 0;
+        for (TransitLine transitLine : schedule.getTransitLines().values()) {
+            counterLines++;
+            counterRoutes += transitLine.getRoutes().size();
+        }
+        log.info("    Created " + counterRoutes + " routes on " + counterLines + " lines.");
+        if (extractDate != null) log.info("    Day " + extractDate);
+        log.info("... GTFS converted to an unmapped MATSIM Transit Schedule");
+        log.info("#########################################################");
 
-		for(Transfer transfer : feed.getTransfers()) {
-			if(!transfer.getTransferType().equals(GtfsDefinitions.TransferType.TRANSFER_NOT_POSSIBLE)) {
-				Id<TransitStopFacility> fromStop = Id.create(transfer.getFromStopId(), TransitStopFacility.class);
-				Id<TransitStopFacility> toStop = Id.create(transfer.getToStopId(), TransitStopFacility.class);
+        this.transitSchedule = schedule;
+        this.vehiclesContainer = vehicles;
+    }
 
-				// Note: Timed transfer points (type 1) cannot be represented with minimalTransferTimes only
-				double minTransferTime = 0;
-				if(transfer.getTransferType().equals(GtfsDefinitions.TransferType.REQUIRES_MIN_TRANSFER_TIME)) {
-					minTransferTime = transfer.getMinTransferTime();
-				}
-				minimalTransferTimes.set(fromStop, toStop, minTransferTime);
-			}
-		}
-	}
+    protected void createStopFacilities(TransitSchedule schedule) {
+        for (Stop stop : this.feed.getStops().values()) {
+            TransitStopFacility stopFacility = createStopFacility(stop);
+            if (stopFacility != null) {
+                schedule.addStopFacility(stopFacility);
+            }
+        }
+    }
 
-	/**
-	 * @return null if stop should not be converted
-	 */
-	protected TransitStopFacility createStopFacility(Stop stop) {
-		Id<TransitStopFacility> id = createStopFacilityId(stop);
-		TransitStopFacility stopFacility = this.scheduleFactory.createTransitStopFacility(id, stop.getCoord(), BLOCKS_DEFAULT);
-		stopFacility.setName(stop.getName());
-		if(stop.getParentStationId() != null) {
-			stopFacility.setStopAreaId(Id.create(stop.getParentStationId(), TransitStopArea.class));
-		}
-		return stopFacility;
-	}
+    protected void createTransfers(TransitSchedule schedule) {
+        MinimalTransferTimes minimalTransferTimes = schedule.getMinimalTransferTimes();
 
-	protected void createTransitLines(TransitSchedule schedule, LocalDate extractDate) {
-		// info
-		log.info("    Creating TransitLines from routes and TransitRoutes from trips...");
+        for (Transfer transfer : feed.getTransfers()) {
+            if (!transfer.getTransferType().equals(GtfsDefinitions.TransferType.TRANSFER_NOT_POSSIBLE)) {
+                Id<TransitStopFacility> fromStop = Id.create(transfer.getFromStopId(), TransitStopFacility.class);
+                Id<TransitStopFacility> toStop = Id.create(transfer.getToStopId(), TransitStopFacility.class);
 
-		for(Route gtfsRoute : this.feed.getRoutes().values()) {
-			//Todo: a control flow statement is added to handle BMT schedule
-			RouteImplWei gtfsRouteForChecking = (RouteImplWei) gtfsRoute;
+                // Note: Timed transfer points (type 1) cannot be represented with minimalTransferTimes only
+                double minTransferTime = 0;
+                if (transfer.getTransferType().equals(GtfsDefinitions.TransferType.REQUIRES_MIN_TRANSFER_TIME)) {
+                    minTransferTime = transfer.getMinTransferTime();
+                }
+                minimalTransferTimes.set(fromStop, toStop, minTransferTime);
+            }
+        }
+    }
 
-			if (!gtfsRouteForChecking.getRouteType().equals(GtfsDefinitions.RouteType.RAIL)){
-				if (!gtfsRouteForChecking.getAgencyId().equals("63")){
-					// create a MATSim TransitLine for each Route
-					TransitLine newTransitLine = createTransitLine(gtfsRoute);
-					if(newTransitLine != null) {
-						schedule.addTransitLine(newTransitLine);
+    /**
+     * @return null if stop should not be converted
+     */
+    protected TransitStopFacility createStopFacility(Stop stop) {
+        Id<TransitStopFacility> id = createStopFacilityId(stop);
+        TransitStopFacility stopFacility = this.scheduleFactory.createTransitStopFacility(id, stop.getCoord(), BLOCKS_DEFAULT);
+        stopFacility.setName(stop.getName());
+        if (stop.getParentStationId() != null) {
+            stopFacility.setStopAreaId(Id.create(stop.getParentStationId(), TransitStopArea.class));
+        }
+        return stopFacility;
+    }
 
-						// create TransitRoute for each trip
-						for(Trip trip : gtfsRoute.getTrips().values()) {
-							// check if the trip actually runs on the extract date
-							if(trip.getService().runsOnDate(extractDate)) {
-								TransitRoute transitRoute = createTransitRoute(trip, schedule.getFacilities());
-								if(transitRoute != null) {
-									newTransitLine.addRoute(transitRoute);
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+    protected void createTransitLines(TransitSchedule schedule, LocalDate extractDate) {
+        // info
+        log.info("    Creating TransitLines from routes and TransitRoutes from trips...");
 
-		if(noStopTimeTrips > 0) {
-			log.warn(noStopTimeTrips + " trips without stop times were not converted");
-		}
-		if(stopPairsWithoutOffset > 0) {
-			log.warn(stopPairsWithoutOffset + " trips contain stops with equal departure times.");
-		}
-	}
+        for (Route gtfsRoute : this.feed.getRoutes().values()) {
+            //Todo: a control flow statement is added to handle BMT schedule
+            RouteImplWei gtfsRouteForChecking = (RouteImplWei) gtfsRoute;
 
-	/**
-	 * @return null if route should not be converted
-	 */
-	protected TransitLine createTransitLine(Route gtfsRoute) {
-		Id<TransitLine> id = createTransitLineId(gtfsRoute);
-		TransitLine line = this.scheduleFactory.createTransitLine(id);
-		line.setName(gtfsRoute.getShortName());
-		return line;
-	}
+            if (!gtfsRouteForChecking.getRouteType().equals(GtfsDefinitions.RouteType.RAIL)) {
+                if (!gtfsRouteForChecking.getAgencyId().equals("63")) {
+                    // create a MATSim TransitLine for each Route
+                    TransitLine newTransitLine = createTransitLine(gtfsRoute);
+                    if (newTransitLine != null) {
+                        schedule.addTransitLine(newTransitLine);
 
-	/**
-	 * @return null if route should not be converted
-	 */
-	protected TransitRoute createTransitRoute(Trip trip, Map<Id<TransitStopFacility>, TransitStopFacility> stopFacilities) {
-		Id<RouteShape> shapeId = trip.getShape() != null ? trip.getShape().getId() : null;
+                        // create TransitRoute for each trip
+                        for (Trip trip : gtfsRoute.getTrips().values()) {
+                            // check if the trip actually runs on the extract date
+                            if (trip.getService().runsOnDate(extractDate)) {
+                                TransitRoute transitRoute = createTransitRoute(trip, schedule.getFacilities());
+                                if (transitRoute != null) {
+                                    newTransitLine.addRoute(transitRoute);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-		if(trip.getStopTimes().size() <= 1) {
-			noStopTimeTrips++;
-			return null;
-		}
+        if (noStopTimeTrips > 0) {
+            log.warn(noStopTimeTrips + " trips without stop times were not converted");
+        }
+        if (stopPairsWithoutOffset > 0) {
+            log.warn(stopPairsWithoutOffset + " trips contain stops with equal departure times.");
+        }
+    }
 
-		// Get the stop sequence (with arrivalOffset and departureOffset) of the trip.
-		List<TransitRouteStop> transitRouteStops = new ArrayList<>();
+    /**
+     * @return null if route should not be converted
+     */
+    protected TransitLine createTransitLine(Route gtfsRoute) {
+        Id<TransitLine> id = createTransitLineId(gtfsRoute);
+        TransitLine line = this.scheduleFactory.createTransitLine(id);
+        line.setName(gtfsRoute.getShortName());
+        return line;
+    }
 
-		// create transit route stops
-		boolean hasStopPairsWithoutOffset = false;
-		int prevStopDepartureTime = -1;
-		for(StopTime stopTime : trip.getStopTimes()) {
-			TransitRouteStop newTransitRouteStop = createTransitRouteStop(stopTime, trip, stopFacilities);
-			transitRouteStops.add(newTransitRouteStop);
+    /**
+     * @return null if route should not be converted
+     */
+    protected TransitRoute createTransitRoute(Trip trip, Map<Id<TransitStopFacility>, TransitStopFacility> stopFacilities) {
+        Id<RouteShape> shapeId = trip.getShape() != null ? trip.getShape().getId() : null;
 
-			if(stopTime.getDepartureTime() == prevStopDepartureTime) {
-				hasStopPairsWithoutOffset = true;
-			}
-			prevStopDepartureTime = stopTime.getDepartureTime();
-		}
-		if(hasStopPairsWithoutOffset) stopPairsWithoutOffset++;
+        if (trip.getStopTimes().size() <= 1) {
+            noStopTimeTrips++;
+            return null;
+        }
 
-		// Calculate departures from frequencies (if available)
-		TransitRoute transitRoute;
-		if(trip.getFrequencies().size() > 0) {
-			transitRoute = this.scheduleFactory.createTransitRoute(createTransitRouteId(trip), null, transitRouteStops, trip.getRoute().getRouteType().name);
+        // Get the stop sequence (with arrivalOffset and departureOffset) of the trip.
+        List<TransitRouteStop> transitRouteStops = new ArrayList<>();
 
-			for(Frequency frequency : trip.getFrequencies()) {
-				for(int t = frequency.getStartTime(); t < frequency.getEndTime(); t += frequency.getHeadWaySecs()) {
-					Departure newDeparture = this.scheduleFactory.createDeparture(createDepartureId(transitRoute, t), t);
-					transitRoute.addDeparture(newDeparture);
-				}
-			}
-		} else {
-			// Calculate departures from stopTimes
-			int routeStartTime = trip.getStopTimes().first().getDepartureTime();
+        // create transit route stops
+        boolean hasStopPairsWithoutOffset = false;
+        int prevStopDepartureTime = -1;
+        for (StopTime stopTime : trip.getStopTimes()) {
+            TransitRouteStop newTransitRouteStop = createTransitRouteStop(stopTime, trip, stopFacilities);
+            transitRouteStops.add(newTransitRouteStop);
 
-			transitRoute = this.scheduleFactory.createTransitRoute(createTransitRouteId(trip), null, transitRouteStops, trip.getRoute().getRouteType().name);
-			Departure newDeparture = this.scheduleFactory.createDeparture(createDepartureId(transitRoute, routeStartTime), routeStartTime);
-			transitRoute.addDeparture(newDeparture);
-		}
-		if(shapeId != null) ScheduleTools.setShapeId(transitRoute, trip.getShape().getId());
-		return transitRoute;
-	}
+            if (stopTime.getDepartureTime() == prevStopDepartureTime) {
+                hasStopPairsWithoutOffset = true;
+            }
+            prevStopDepartureTime = stopTime.getDepartureTime();
+        }
+        if (hasStopPairsWithoutOffset) stopPairsWithoutOffset++;
 
-	protected TransitRouteStop createTransitRouteStop(StopTime stopTime, Trip trip, Map<Id<TransitStopFacility>, TransitStopFacility> stopFacilities) {
-		double arrivalOffset = 0, departureOffset = 0;
+        // Calculate departures from frequencies (if available)
+        TransitRoute transitRoute;
+        if (trip.getFrequencies().size() > 0) {
+            transitRoute = this.scheduleFactory.createTransitRoute(createTransitRouteId(trip), null, transitRouteStops, trip.getRoute().getRouteType().name);
 
-		int routeStartTime = trip.getStopTimes().first().getArrivalTime();
-		int firstSequencePos = trip.getStopTimes().first().getSequencePosition();
-		int lastSequencePos = trip.getStopTimes().last().getSequencePosition();
+            for (Frequency frequency : trip.getFrequencies()) {
+                for (int t = frequency.getStartTime(); t < frequency.getEndTime(); t += frequency.getHeadWaySecs()) {
+                    Departure newDeparture = this.scheduleFactory.createDeparture(createDepartureId(transitRoute, t), t);
+                    transitRoute.addDeparture(newDeparture);
+                }
+            }
+        } else {
+            // Calculate departures from stopTimes
+            int routeStartTime = trip.getStopTimes().first().getDepartureTime();
 
-		// add arrivalOffset time if current stopTime is not on the first stop of the route
-		if(!stopTime.getSequencePosition().equals(firstSequencePos)) {
-			arrivalOffset = stopTime.getArrivalTime() - routeStartTime;
-		}
+            transitRoute = this.scheduleFactory.createTransitRoute(createTransitRouteId(trip), null, transitRouteStops, trip.getRoute().getRouteType().name);
+            Departure newDeparture = this.scheduleFactory.createDeparture(createDepartureId(transitRoute, routeStartTime), routeStartTime);
+            transitRoute.addDeparture(newDeparture);
+        }
+        if (shapeId != null) ScheduleTools.setShapeId(transitRoute, trip.getShape().getId());
+        return transitRoute;
+    }
 
-		// add departure time if current stopTime is not on the last stop of the route
-		if(!stopTime.getSequencePosition().equals(lastSequencePos)) {
-			departureOffset = stopTime.getArrivalTime() - routeStartTime;
-		}
+    protected TransitRouteStop createTransitRouteStop(StopTime stopTime, Trip trip, Map<Id<TransitStopFacility>, TransitStopFacility> stopFacilities) {
+        double arrivalOffset = 0, departureOffset = 0;
 
-		TransitStopFacility stopFacility = stopFacilities.get(createStopFacilityId(stopTime.getStop()));
+        int routeStartTime = trip.getStopTimes().first().getArrivalTime();
+        int firstSequencePos = trip.getStopTimes().first().getSequencePosition();
+        int lastSequencePos = trip.getStopTimes().last().getSequencePosition();
 
-		TransitRouteStop newTransitRouteStop = this.scheduleFactory.createTransitRouteStop(stopFacility, arrivalOffset, departureOffset);
-		newTransitRouteStop.setAwaitDepartureTime(AWAIT_DEPARTURE_TIME_DEFAULT);
-		return newTransitRouteStop;
-	}
+        // add arrivalOffset time if current stopTime is not on the first stop of the route
+        if (!stopTime.getSequencePosition().equals(firstSequencePos)) {
+            arrivalOffset = stopTime.getArrivalTime() - routeStartTime;
+        }
 
-	protected void combineTransitRoutes(TransitSchedule schedule) {
-		ScheduleCleaner.combineIdenticalTransitRoutes(schedule);
-	}
+        // add departure time if current stopTime is not on the last stop of the route
+        if (!stopTime.getSequencePosition().equals(lastSequencePos)) {
+            departureOffset = stopTime.getArrivalTime() - routeStartTime;
+        }
 
-	protected void cleanSchedule(TransitSchedule schedule) {
-		ScheduleCleaner.removeNotUsedStopFacilities(schedule);
-		ScheduleCleaner.removeNotUsedMinimalTransferTimes(schedule);
-	}
+        TransitStopFacility stopFacility = stopFacilities.get(createStopFacilityId(stopTime.getStop()));
 
-	protected Id<TransitLine> createTransitLineId(Route gtfsRoute) {
-		String id = gtfsRoute.getId();
-		return Id.create(id, TransitLine.class);
-	}
+        TransitRouteStop newTransitRouteStop = this.scheduleFactory.createTransitRouteStop(stopFacility, arrivalOffset, departureOffset);
+        newTransitRouteStop.setAwaitDepartureTime(AWAIT_DEPARTURE_TIME_DEFAULT);
+        return newTransitRouteStop;
+    }
 
-	protected Id<TransitRoute> createTransitRouteId(Trip trip) {
-		return Id.create(trip.getId(), TransitRoute.class);
-	}
+    protected void combineTransitRoutes(TransitSchedule schedule) {
+        ScheduleCleaner.combineIdenticalTransitRoutes(schedule);
+    }
 
-	protected Id<TransitStopFacility> createStopFacilityId(Stop stop) {
-		return Id.create(stop.getId(), TransitStopFacility.class);
-	}
+    protected void cleanSchedule(TransitSchedule schedule) {
+        ScheduleCleaner.removeNotUsedStopFacilities(schedule);
+        ScheduleCleaner.removeNotUsedMinimalTransferTimes(schedule);
+    }
 
-	protected Id<Departure> createDepartureId(TransitRoute route, int time) {
-		String str = route.getId().toString() + "_" + Time.writeTime(time, "HH:mm:ss");
-		return Id.create(str, Departure.class);
-	}
+    protected Id<TransitLine> createTransitLineId(Route gtfsRoute) {
+        String id = gtfsRoute.getId();
+        return Id.create(id, TransitLine.class);
+    }
 
-	protected void createVehicles(TransitSchedule schedule, Vehicles vehicles) {
-		VehiclesFactory vf = vehicles.getFactory();
-		Map<GtfsDefinitions.ExtendedRouteType, VehicleType> vehicleTypes = new HashMap<>();
+    protected Id<TransitRoute> createTransitRouteId(Trip trip) {
+        return Id.create(trip.getId(), TransitRoute.class);
+    }
 
-		long vehId = 0;
-		for(TransitLine line : schedule.getTransitLines().values()) {
-			// get extended route type
-			Route gtfsRoute = feed.getRoutes().get(line.getId().toString());
-			GtfsDefinitions.ExtendedRouteType extType = gtfsRoute.getExtendedRouteType();
+    protected Id<TransitStopFacility> createStopFacilityId(Stop stop) {
+        return Id.create(stop.getId(), TransitStopFacility.class);
+    }
 
-			// create vehicle type for each extended route type
-			if(!vehicleTypes.containsKey(extType)) {
-				VehicleType defaultVehicleType = ScheduleTools.createDefaultVehicleType(extType.name, extType.routeType.name);
-				vehicles.addVehicleType(defaultVehicleType);
-				vehicleTypes.put(extType, defaultVehicleType);
-			}
+    protected Id<Departure> createDepartureId(TransitRoute route, int time) {
+        String str = route.getId().toString() + "_" + Time.writeTime(time, "HH:mm:ss");
+        return Id.create(str, Departure.class);
+    }
 
-			VehicleType vehicleType = vehicleTypes.get(extType);
-			for(TransitRoute route : line.getRoutes().values()) {
-				// create a vehicle for each departure
-				for(Departure departure : route.getDepartures().values()) {
-					String vehicleId = "veh_" + vehId++ + "_" + route.getTransportMode().replace(" ", "_");
-					Vehicle veh = vf.createVehicle(Id.create(vehicleId, Vehicle.class), vehicleType);
-					vehicles.addVehicle(veh);
-					departure.setVehicleId(veh.getId());
-				}
-			}
-		}
-	}
+    protected void createVehicles(TransitSchedule schedule, Vehicles vehicles) {
+        VehiclesFactory vf = vehicles.getFactory();
+        Map<GtfsDefinitions.ExtendedRouteType, VehicleType> vehicleTypes = new HashMap<>();
 
-	/**
-	 * @return The date from which services and thus trips should be extracted
-	 */
-	protected LocalDate getExtractDate(String param) {
-		switch(param) {
-			case ALL_SERVICE_IDS: {
-				log.warn("    Using all trips is not recommended");
-				log.info("... Using all service IDs");
-				return null;
-			}
+        long vehId = 0;
+        for (TransitLine line : schedule.getTransitLines().values()) {
+            // get extended route type
+            Route gtfsRoute = feed.getRoutes().get(line.getId().toString());
+            GtfsDefinitions.ExtendedRouteType extType = gtfsRoute.getExtendedRouteType();
 
-			case DAY_WITH_MOST_SERVICES: {
-				log.info("    Using service IDs of the day with the most services (" + DAY_WITH_MOST_SERVICES + ").");
-				return GtfsTools.getDayWithMostServices(feed);
-			}
+            // create vehicle type for each extended route type
+            if (!vehicleTypes.containsKey(extType)) {
+                VehicleType defaultVehicleType = ScheduleTools.createDefaultVehicleType(extType.name, extType.routeType.name);
+                vehicles.addVehicleType(defaultVehicleType);
+                vehicleTypes.put(extType, defaultVehicleType);
+            }
 
-			case DAY_WITH_MOST_TRIPS: {
-				log.info("    Using service IDs of the day with the most trips (" + DAY_WITH_MOST_TRIPS + ").");
-				return GtfsTools.getDayWithMostTrips(feed);
-			}
+            VehicleType vehicleType = vehicleTypes.get(extType);
+            for (TransitRoute route : line.getRoutes().values()) {
+                // create a vehicle for each departure
+                for (Departure departure : route.getDepartures().values()) {
+                    String vehicleId = "veh_" + vehId++ + "_" + route.getTransportMode().replace(" ", "_");
+                    Vehicle veh = vf.createVehicle(Id.create(vehicleId, Vehicle.class), vehicleType);
+                    vehicles.addVehicle(veh);
+                    departure.setVehicleId(veh.getId());
+                }
+            }
+        }
+    }
 
-			default: {
-				LocalDate date;
-				try {
-					date = LocalDate.of(Integer.parseInt(param.substring(0, 4)), Integer.parseInt(param.substring(4, 6)), Integer.parseInt(param.substring(6, 8)));
-				} catch (NumberFormatException e) {
-					throw new IllegalArgumentException("Extract param not recognized");
-				}
-				return date;
-			}
-		}
-	}
+    /**
+     * @return The date from which services and thus trips should be extracted
+     */
+    protected LocalDate getExtractDate(String param) {
+        switch (param) {
+            case ALL_SERVICE_IDS: {
+                log.warn("    Using all trips is not recommended");
+                log.info("... Using all service IDs");
+                return null;
+            }
+
+            case DAY_WITH_MOST_SERVICES: {
+                log.info("    Using service IDs of the day with the most services (" + DAY_WITH_MOST_SERVICES + ").");
+                return GtfsTools.getDayWithMostServices(feed);
+            }
+
+            case DAY_WITH_MOST_TRIPS: {
+                log.info("    Using service IDs of the day with the most trips (" + DAY_WITH_MOST_TRIPS + ").");
+                return GtfsTools.getDayWithMostTrips(feed);
+            }
+
+            default: {
+                LocalDate date;
+                try {
+                    date = LocalDate.of(Integer.parseInt(param.substring(0, 4)), Integer.parseInt(param.substring(4, 6)), Integer.parseInt(param.substring(6, 8)));
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Extract param not recognized");
+                }
+                return date;
+            }
+        }
+    }
 }
