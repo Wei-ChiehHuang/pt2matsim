@@ -218,6 +218,10 @@ public class GtfsConverter {
 		boolean writeDepartureDate = dateRange != null && !dateRange.getFirst().equals(dateRange.getSecond());
 
 		for(Route gtfsRoute : this.feed.getRoutes().values()) {
+			//Todo allow to select specific route type
+//			if(gtfsRoute.getRouteType().index == 3){
+//				continue;
+//			}
 			// create a MATSim TransitLine for each Route
 			TransitLine newTransitLine = createTransitLine(gtfsRoute);
 			if(newTransitLine != null) {
